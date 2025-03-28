@@ -1,0 +1,19 @@
+[package]
+name = "aigent_framework"
+version = "0.1.0"
+description = "A Solana escrow program supporting SOL and SPL token payments with milestones and dispute resolution"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "aigent_framework"
+
+[features]
+default = []
+no-entrypoint = []
+test-sbf = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = "0.31.0"
+anchor-spl = "0.31.0"

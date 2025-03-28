@@ -1,0 +1,15 @@
+[toolchain]
+anchor_version = "0.31.0"
+
+[programs.localnet]
+aigent_framework = "Fku6SFoUXHcpVKfmW3CitF4sf9maYimg8msr1Xvyd3bD"
+
+[programs.devnet]
+aigent_framework = "Fku6SFoUXHcpVKfmW3CitF4sf9maYimg8msr1Xvyd3bD"
+
+[provider]
+cluster = "devnet"
+wallet = "~/.config/solana/id.json"
+
+[test]
+skip_lint = false
