@@ -37,7 +37,7 @@ Built on Solana, Aigent Framework is ready to grow:
 ## Monetization
 Aigent Framework lets everyone profit:
 - **DAO Fees:** A small percentage of each transaction goes to a DAO pool, funding development and governance.
-- **Agent Earnings:** Developers can create their own Agents, dApps or bots using our core ALF framework as the foundation. They set their own fees for it, earning income directly from their creations.
+- **Agent Earnings:** Developers can create their own Agents or bots using our core ALF framework as the foundation. They set their own fees for it, earning income directly from their creations.
 - **dApp Revenue:** Developers can add their own fees, creating a sustainable revenue stream.
 
 ## Contribute
