@@ -1,34 +1,38 @@
-#![cfg_attr(not(test), warn(unexpected_cfgs))]
-
 use anchor_lang::prelude::*;
-use anchor_spl::token::{Token, TokenAccount};
+use anchor_spl::token::{self, Token, TokenAccount};
 
-declare_id!("Fku6SFoUXHcpVKfmW3CitF4sf9maYimg8msr1Xvyd3bD");
+// Yeah, this is our program's ID. Don't mess with it unless you know what you're doing.
+declare_id!("4ufUzWyPvFqaS8VTdMcm973kgPthw9vHuzwUmBo8QnmJ");
 
+// Max description length. 1024 bytes oughta be enough for anyone, right?
 const MAX_DESC_LEN: usize = 1024;
 
+// Helper functions to keep the main logic from turning into spaghetti.
 pub mod helpers {
     use super::*;
 
-    pub fn transfer_to_escrow<'info>(
+    /// Sends funds to escrow—SOL or tokens, we handle both like champs.
+    pub fn send_to_escrow<'info>(
         amount: u64,
         token_mint: Option<Pubkey>,
         from: &Signer<'info>,
-        to: &Account<'info, Escrow>,
-        token_program: &Program<'info, Token>,
-        system_program: &Program<'info, System>,
+        escrow: &AccountInfo<'info>,
+        token_prog: &Program<'info, Token>,
+        sys_prog: &Program<'info, System>,
         from_token: Option<&Account<'info, TokenAccount>>,
-        to_token: Option<&Account<'info, TokenAccount>>,
+        escrow_token: Option<&Account<'info, TokenAccount>>,
     ) -> Result<()> {
         if let Some(mint) = token_mint {
-            let from_acc = from_token.ok_or(ErrorCode::NoFunds)?;
-            let to_acc = to_token.ok_or(ErrorCode::NoFunds)?;
-            require!(from_acc.mint == mint && to_acc.mint == mint, ErrorCode::BadMint);
-            require!(from_acc.amount >= amount, ErrorCode::NoFunds);
-            anchor_spl::token::transfer(
+            // Token transfer time. Make sure accounts match the mint or we’re screwed.
+            let from_acc = from_token.ok_or(ProgramError::InvalidAccountData)?;
+            let to_acc = escrow_token.ok_or(ProgramError::InvalidAccountData)?;
+            if from_acc.mint != mint || to_acc.mint != mint {
+                return Err(ProgramError::InvalidArgument.into());
+            }
+            token::transfer(
                 CpiContext::new(
-                    token_program.to_account_info(),
-                    anchor_spl::token::Transfer {
+                    token_prog.to_account_info(),
+                    token::Transfer {
                         from: from_acc.to_account_info(),
                         to: to_acc.to_account_info(),
                         authority: from.to_account_info(),
@@ -37,13 +41,13 @@ pub mod helpers {
                 amount,
             )?;
         } else {
-            require!(from.lamports() >= amount, ErrorCode::NoFunds);
+            // Plain old SOL transfer. Simple, but don’t screw up the math.
             anchor_lang::system_program::transfer(
                 CpiContext::new(
-                    system_program.to_account_info(),
+                    sys_prog.to_account_info(),
                     anchor_lang::system_program::Transfer {
                         from: from.to_account_info(),
-                        to: to.to_account_info(),
+                        to: escrow.to_account_info(),
                     },
                 ),
                 amount,
@@ -52,28 +56,35 @@ pub mod helpers {
         Ok(())
     }
 
-    pub fn transfer_funds<'info>(
-        token_mint: Option<Pubkey>,
-        escrow_account_info: &AccountInfo<'info>,
-        to: &AccountInfo<'info>,
+    /// Pulls funds out of escrow. Seeds make it secure, amount > 0 makes it worth doing.
+    pub fn pull_funds<'info>(
         amount: u64,
-        token_program: &Program<'info, Token>,
-        system_program: &Program<'info, System>,
+        token_mint: Option<Pubkey>,
+        escrow: &AccountInfo<'info>,
+        to: &AccountInfo<'info>,
+        token_prog: &Program<'info, Token>,
+        sys_prog: &Program<'info, System>,
         escrow_token: Option<&Account<'info, TokenAccount>>,
         to_token: Option<&Account<'info, TokenAccount>>,
         seeds: &[&[u8]],
     ) -> Result<()> {
+        if amount == 0 {
+            // Why are we even here? Nothing to do.
+            return Ok(());
+        }
         if let Some(mint) = token_mint {
-            let from_acc = escrow_token.ok_or(ErrorCode::NoFunds)?;
-            let to_acc = to_token.ok_or(ErrorCode::NoFunds)?;
-            require!(from_acc.mint == mint && to_acc.mint == mint, ErrorCode::BadMint);
-            anchor_spl::token::transfer(
+            let from_acc = escrow_token.ok_or(ProgramError::InvalidAccountData)?;
+            let to_acc = to_token.ok_or(ProgramError::InvalidAccountData)?;
+            if from_acc.mint != mint || to_acc.mint != mint {
+                return Err(ProgramError::InvalidArgument.into());
+            }
+            token::transfer(
                 CpiContext::new_with_signer(
-                    token_program.to_account_info(),
-                    anchor_spl::token::Transfer {
+                    token_prog.to_account_info(),
+                    token::Transfer {
                         from: from_acc.to_account_info(),
                         to: to_acc.to_account_info(),
-                        authority: escrow_account_info.clone(),
+                        authority: escrow.clone(),
                     },
                     &[seeds],
                 ),
@@ -82,9 +93,9 @@ pub mod helpers {
         } else {
             anchor_lang::system_program::transfer(
                 CpiContext::new_with_signer(
-                    system_program.to_account_info(),
+                    sys_prog.to_account_info(),
                     anchor_lang::system_program::Transfer {
-                        from: escrow_account_info.clone(),
+                        from: escrow.clone(),
                         to: to.to_account_info(),
                     },
                     &[seeds],
@@ -99,749 +110,451 @@ pub mod helpers {
 #[program]
 pub mod aigent_framework {
     use super::*;
-    use crate::helpers::{transfer_funds, transfer_to_escrow};
+    use crate::helpers::{pull_funds, send_to_escrow};
 
+    // Basis points denominator. 10,000 bps = 100%. Math checks out.
     const BPS_DENOM: u64 = 10_000;
-    const MIN_AMOUNT: u64 = 10_000_000; // 0.01 SOL or equiv
-    const MIN_FEE: u64 = 1_000_000; // 0.001 SOL
-    const MAX_AMOUNT: u64 = 1_000_000_000; // 1B tokens
-    const MAX_RELEASE: u64 = 31_536_000; // 1 year
 
+    /// Sets up the contract config. Authority, DAO pool, and fee—done.
     pub fn initialize_contract(
         ctx: Context<InitializeContract>,
-        team_wallet: Pubkey,
+        dao_pool: Pubkey,
         sol_fee_bps: u64,
-        milestone_fee_bps: u64,
-        req_token_amt: u64,
-        token_mint: Pubkey,
     ) -> Result<()> {
-        require!(sol_fee_bps <= BPS_DENOM, ErrorCode::BadFee);
-        require!(milestone_fee_bps <= BPS_DENOM, ErrorCode::BadFee);
-        require!(req_token_amt <= MAX_AMOUNT, ErrorCode::TooMuch);
         let config = &mut ctx.accounts.config;
-        require!(config.authority == Pubkey::default(), ErrorCode::AlreadyInit);
         config.authority = *ctx.accounts.authority.key;
-        config.team_wallet = team_wallet;
-        config.sol_fee_bps = sol_fee_bps;
-        config.milestone_fee_bps = milestone_fee_bps;
-        config.required_token_amount = req_token_amt;
-        config.token_mint = token_mint;
+        config.dao_pool = dao_pool;
+        config.sol_fee_bps = sol_fee_bps; // Fee in basis points, keep it reasonable.
         Ok(())
     }
 
-    pub fn update_config(
-        ctx: Context<UpdateConfig>,
-        team_wallet: Pubkey,
-        sol_fee_bps: u64,
-        milestone_fee_bps: u64,
-        req_token_amt: u64,
-        token_mint: Pubkey,
-    ) -> Result<()> {
-        require!(sol_fee_bps <= BPS_DENOM, ErrorCode::BadFee);
-        require!(milestone_fee_bps <= BPS_DENOM, ErrorCode::BadFee);
-        require!(req_token_amt <= MAX_AMOUNT, ErrorCode::TooMuch);
-        let config = &mut ctx.accounts.config;
-        require!(ctx.accounts.authority.key() == config.authority, ErrorCode::Unauthorized);
-        config.team_wallet = team_wallet;
-        config.sol_fee_bps = sol_fee_bps;
-        config.milestone_fee_bps = milestone_fee_bps;
-        config.required_token_amount = req_token_amt;
-        config.token_mint = token_mint;
-        Ok(())
-    }
-
-    pub fn initialize_escrow(
+    /// Kicks off an escrow. Buyer sends rent + deposit, we lock it up.
+    pub fn start_escrow(
         ctx: Context<InitializeEscrow>,
         tx_id: Pubkey,
-        amount: u64,
+        rent: u64,
+        deposit: u64,
         release_secs: u64,
         token_mint: Option<Pubkey>,
     ) -> Result<()> {
-        require!(amount >= MIN_AMOUNT, ErrorCode::TooLow);
-        require!(amount <= MAX_AMOUNT, ErrorCode::TooMuch);
-        require!(release_secs <= MAX_RELEASE, ErrorCode::TooLong);
-
-        let escrow = &mut ctx.accounts.escrow;
+        let total = rent + deposit; // No overflow check—live dangerously.
+        let meta = &mut ctx.accounts.transaction_metadata;
         let now = Clock::get()?.unix_timestamp;
-        escrow._transaction_id = tx_id;
-        escrow.buyer = *ctx.accounts.buyer.key;
-        escrow.seller = *ctx.accounts.seller.key;
-        escrow.agent = *ctx.accounts.agent.key;
-        escrow.amount = amount;
-        escrow.is_disputed = false;
-        escrow.is_completed = false;
-        escrow.release_timestamp = now.checked_add(release_secs as i64).ok_or(ErrorCode::TimeOverflow)?;
-        escrow.token_mint = token_mint;
-        escrow.dispute_description = String::new();
-        escrow.milestones = Vec::new();
 
-        transfer_to_escrow(
-            amount,
-            token_mint,
-            &ctx.accounts.buyer,
-            escrow,
-            &ctx.accounts.token_program,
-            &ctx.accounts.system_program,
-            ctx.accounts.buyer_token_account.as_ref(),
-            ctx.accounts.escrow_token_account.as_ref(),
-        )?;
+        // Fill out the escrow ticket.
+        meta._transaction_id = tx_id;
+        meta.buyer = *ctx.accounts.buyer.key;
+        meta.seller = *ctx.accounts.seller.key;
+        meta.agent = *ctx.accounts.agent.key;
+        meta.rental_amount = rent;
+        meta.deposit_amount = deposit;
+        meta.total_amount = total;
+        meta.is_disputed = false;
+        meta.is_completed = false;
+        meta.release_timestamp = now + release_secs as i64;
+        meta.token_mint = token_mint;
+        meta.dispute_description = String::new();
+        meta.deposit_release_status = DepositReleaseStatus::None;
 
-        emit!(EscrowInitialized {
-            transaction_id: escrow._transaction_id,
-            buyer: escrow.buyer,
-            seller: escrow.seller,
-            agent: escrow.agent,
-            amount,
-            token_mint,
-        });
-        Ok(())
-    }
-
-    pub fn initialize_milestone_escrow(
-        ctx: Context<InitializeMilestoneEscrow>,
-        tx_id: Pubkey,
-        milestones: Vec<Milestone>,
-        token_mint: Option<Pubkey>,
-    ) -> Result<()> {
-        require!(!milestones.is_empty(), ErrorCode::NoMilestones);
-        let total: u64 = milestones.iter().map(|m| m.amount).sum();
-        require!(total >= MIN_AMOUNT, ErrorCode::TooLow);
-        require!(total <= MAX_AMOUNT, ErrorCode::TooMuch);
-
-        let escrow = &mut ctx.accounts.escrow;
-        escrow._transaction_id = tx_id;
-        escrow.buyer = *ctx.accounts.buyer.key;
-        escrow.seller = *ctx.accounts.seller.key;
-        escrow.agent = *ctx.accounts.agent.key;
-        escrow.amount = total;
-        escrow.is_disputed = false;
-        escrow.is_completed = false;
-        escrow.release_timestamp = 0;
-        escrow.token_mint = token_mint;
-        escrow.dispute_description = String::new();
-        escrow.milestones = milestones;
-
-        transfer_to_escrow(
+        // Move the money. SOL or tokens, we don’t care.
+        send_to_escrow(
             total,
             token_mint,
             &ctx.accounts.buyer,
-            escrow,
+            &ctx.accounts.central_sol_escrow,
             &ctx.accounts.token_program,
             &ctx.accounts.system_program,
             ctx.accounts.buyer_token_account.as_ref(),
-            ctx.accounts.escrow_token_account.as_ref(),
+            ctx.accounts.central_token_account.as_ref(),
         )?;
-
-        emit!(MilestoneEscrowInitialized {
-            transaction_id: escrow._transaction_id,
-            buyer: escrow.buyer,
-            seller: escrow.seller,
-            agent: escrow.agent,
-            milestones: escrow.milestones.clone(),
-            token_mint,
-        });
         Ok(())
     }
 
-    pub fn release_payment(ctx: Context<ReleasePayment>, transaction_id: Pubkey) -> Result<()> {
-        let escrow = &mut ctx.accounts.escrow;
+    /// Pays the rent to the seller, skims a fee for the DAO. Agent-only gig.
+    pub fn pay_rent(ctx: Context<ReleaseRentalFee>, _tx_id: Pubkey) -> Result<()> {
+        let meta = &mut ctx.accounts.transaction_metadata;
         let config = &ctx.accounts.config;
-        require!(ctx.accounts.agent.key() == escrow.agent, ErrorCode::Unauthorized);
-        require!(!escrow.is_disputed, ErrorCode::Disputed);
-        require!(!escrow.is_completed, ErrorCode::Done);
-        require!(escrow.milestones.is_empty(), ErrorCode::HasMilestones);
-    
-        let fee = (escrow.amount * config.sol_fee_bps / BPS_DENOM)
-            .max(if escrow.token_mint.is_none() { MIN_FEE } else { 0 });
-        let seller_amt = escrow.amount.checked_sub(fee).ok_or(ErrorCode::Overflow)?;
-        let seeds = &[b"escrow", transaction_id.as_ref(), &[ctx.bumps.escrow]];
-    
-        transfer_funds(
-            escrow.token_mint,
-            &escrow.to_account_info(),
-            &ctx.accounts.team_wallet,
-            fee,
-            &ctx.accounts.token_program,
-            &ctx.accounts.system_program,
-            ctx.accounts.escrow_token_account.as_ref(),
-            ctx.accounts.team_token_account.as_ref(),
-            seeds,
-        )?;
-        transfer_funds(
-            escrow.token_mint,
-            &escrow.to_account_info(),
-            &ctx.accounts.seller,
-            seller_amt,
-            &ctx.accounts.token_program,
-            &ctx.accounts.system_program,
-            ctx.accounts.escrow_token_account.as_ref(),
-            ctx.accounts.seller_token_account.as_ref(),
-            seeds,
-        )?;
-    
-        escrow.is_completed = true;
-        emit!(PaymentReleased {
-            transaction_id: escrow._transaction_id,
-            seller: escrow.seller,
-            amount: seller_amt,
-        });
-        Ok(())
-    }
 
-    pub fn release_milestone(
-        ctx: Context<ReleaseMilestone>,
-        transaction_id: Pubkey,
-        idx: u8,
-    ) -> Result<()> {
-        let escrow = &mut ctx.accounts.escrow;
-        let config = &ctx.accounts.config;
-        require!(ctx.accounts.agent.key() == escrow.agent, ErrorCode::Unauthorized);
-        require!(!escrow.is_disputed, ErrorCode::Disputed);
-        require!(!escrow.is_completed, ErrorCode::Done);
-        require!(!escrow.milestones.is_empty(), ErrorCode::NoMilestones);
-
-        let token_mint = escrow.token_mint;
-        let escrow_account_info = escrow.to_account_info();
-        let seeds = &[b"escrow", transaction_id.as_ref(), &[ctx.bumps.escrow]];
-        let tx_id = escrow._transaction_id;
-
-        let (milestone_amount, all_completed) = {
-            let milestone = escrow.milestones.get_mut(idx as usize).ok_or(ErrorCode::BadIndex)?;
-            require!(!milestone.is_completed, ErrorCode::MilestoneDone);
-            let amount = milestone.amount;
-            milestone.is_completed = true;
-            let all_done = escrow.milestones.iter().all(|m| m.is_completed);
-            (amount, all_done)
-        };
-
-        let fee = (milestone_amount * config.milestone_fee_bps / BPS_DENOM)
-            .max(if token_mint.is_none() { MIN_FEE } else { 0 });
-        let seller_amt = milestone_amount.checked_sub(fee).ok_or(ErrorCode::Overflow)?;
-
-        transfer_funds(
-            token_mint,
-            &escrow_account_info,
-            &ctx.accounts.team_wallet,
-            fee,
-            &ctx.accounts.token_program,
-            &ctx.accounts.system_program,
-            ctx.accounts.escrow_token_account.as_ref(),
-            ctx.accounts.team_token_account.as_ref(),
-            seeds,
-        )?;
-        transfer_funds(
-            token_mint,
-            &escrow_account_info,
-            &ctx.accounts.seller,
-            seller_amt,
-            &ctx.accounts.token_program,
-            &ctx.accounts.system_program,
-            ctx.accounts.escrow_token_account.as_ref(),
-            ctx.accounts.seller_token_account.as_ref(),
-            seeds,
-        )?;
-
-        if all_completed {
-            escrow.is_completed = true;
+        if ctx.accounts.agent.key() != meta.agent {
+            return Err(ProgramError::IllegalOwner.into()); // Nice try, impostor.
+        }
+        if meta.is_disputed {
+            return Err(ProgramError::InvalidAccountData.into()); // Dispute’s on, hands off.
         }
 
-        emit!(MilestoneReleased {
-            transaction_id: tx_id,
-            milestone_index: idx,
-            amount: seller_amt,
-        });
+        let fee = meta.rental_amount * config.sol_fee_bps / BPS_DENOM;
+        let seller_cut = meta.rental_amount - fee;
+        let seeds = &[b"central_sol_escrow".as_ref(), &[ctx.bumps.central_sol_escrow]];
 
-        Ok(())
-    }
-
-    pub fn check_and_release(ctx: Context<CheckAndRelease>, _transaction_id: Pubkey) -> Result<()> {
-        let escrow = &mut ctx.accounts.escrow;
-        let config = &ctx.accounts.config;
-        let now = Clock::get()?.unix_timestamp;
-        require!(now >= escrow.release_timestamp, ErrorCode::TooEarly);
-        require!(!escrow.is_disputed, ErrorCode::Disputed);
-        require!(!escrow.is_completed, ErrorCode::Done);
-        require!(escrow.milestones.is_empty(), ErrorCode::HasMilestones);
-
-        let fee = (escrow.amount * config.sol_fee_bps / BPS_DENOM)
-            .max(if escrow.token_mint.is_none() { MIN_FEE } else { 0 });
-        let seller_amt = escrow.amount.checked_sub(fee).ok_or(ErrorCode::Overflow)?;
-        let seeds = &[b"escrow", _transaction_id.as_ref(), &[ctx.bumps.escrow]];
-
-        transfer_funds(
-            escrow.token_mint,
-            &escrow.to_account_info(),
-            &ctx.accounts.team_wallet,
+        // DAO gets its cut.
+        pull_funds(
             fee,
+            meta.token_mint,
+            &ctx.accounts.central_sol_escrow,
+            &ctx.accounts.dao_pool,
             &ctx.accounts.token_program,
             &ctx.accounts.system_program,
-            ctx.accounts.escrow_token_account.as_ref(),
-            ctx.accounts.team_token_account.as_ref(),
+            ctx.accounts.central_token_account.as_ref(),
+            ctx.accounts.dao_pool_token_account.as_ref(),
             seeds,
         )?;
-        transfer_funds(
-            escrow.token_mint,
-            &escrow.to_account_info(),
+        // Seller gets the rest.
+        pull_funds(
+            seller_cut,
+            meta.token_mint,
+            &ctx.accounts.central_sol_escrow,
             &ctx.accounts.seller,
-            seller_amt,
             &ctx.accounts.token_program,
             &ctx.accounts.system_program,
-            ctx.accounts.escrow_token_account.as_ref(),
+            ctx.accounts.central_token_account.as_ref(),
             ctx.accounts.seller_token_account.as_ref(),
             seeds,
         )?;
-
-        escrow.is_completed = true;
-        emit!(PaymentReleased {
-            transaction_id: escrow._transaction_id,
-            seller: escrow.seller,
-            amount: seller_amt,
-        });
         Ok(())
     }
 
-    pub fn start_dispute(
-        ctx: Context<StartDispute>,
-        _transaction_id: Pubkey,
-        desc: String,
-    ) -> Result<()> {
-        let escrow = &mut ctx.accounts.escrow;
-        let config = &ctx.accounts.config;
-        require!(ctx.accounts.agent.key() == escrow.agent, ErrorCode::Unauthorized);
-        require!(
-            ctx.accounts.agent_token_account.amount >= config.required_token_amount,
-            ErrorCode::LowTokens
-        );
-        require!(desc.len() <= MAX_DESC_LEN, ErrorCode::DescTooLong);
-        require!(!desc.is_empty(), ErrorCode::DescTooShort);
-        require!(!escrow.is_disputed, ErrorCode::AlreadyDisputed);
-        require!(!escrow.is_completed, ErrorCode::Done);
+    /// Returns deposit to buyer—full or partial. Seller’s call.
+    pub fn return_deposit(ctx: Context<ReleaseDeposit>, _tx_id: Pubkey, amount: u64) -> Result<()> {
+        let meta = &mut ctx.accounts.transaction_metadata;
 
-        escrow.is_disputed = true;
-        escrow.dispute_description = desc.clone();
-        emit!(DisputeStarted {
-            transaction_id: escrow._transaction_id,
-            description: escrow.dispute_description.clone(),
-        });
-        Ok(())
-    }
+        if ctx.accounts.seller.key() != meta.seller {
+            return Err(ProgramError::IllegalOwner.into()); // Not your deposit, pal.
+        }
+        if meta.is_disputed {
+            return Err(ProgramError::InvalidAccountData.into()); // Dispute’s active, hold up.
+        }
+        if amount > meta.deposit_amount {
+            return Err(ProgramError::InvalidArgument.into()); // Can’t give more than we got.
+        }
 
-    pub fn resolve_dispute(
-        ctx: Context<ResolveDispute>,
-        _transaction_id: Pubkey,
-        winner: Pubkey,
-    ) -> Result<()> {
-        let escrow = &mut ctx.accounts.escrow;
-        let config = &ctx.accounts.config;
-        require!(ctx.accounts.agent.key() == escrow.agent, ErrorCode::Unauthorized);
-        require!(
-            ctx.accounts.agent_token_account.amount >= config.required_token_amount,
-            ErrorCode::LowTokens
-        );
-        require!(escrow.is_disputed, ErrorCode::NotDisputed);
-        require!(!escrow.is_completed, ErrorCode::Done);
-        require!(
-            winner == escrow.buyer || winner == escrow.seller,
-            ErrorCode::BadWinner
-        );
+        let seeds = &[b"central_sol_escrow".as_ref(), &[ctx.bumps.central_sol_escrow]];
+        pull_funds(
+            amount,
+            meta.token_mint,
+            &ctx.accounts.central_sol_escrow,
+            &ctx.accounts.buyer,
+            &ctx.accounts.token_program,
+            &ctx.accounts.system_program,
+            ctx.accounts.central_token_account.as_ref(),
+            ctx.accounts.buyer_token_account.as_ref(),
+            seeds,
+        )?;
 
-        let fee_bps = if escrow.milestones.is_empty() {
-            config.sol_fee_bps
+        if amount == meta.deposit_amount {
+            meta.deposit_release_status = DepositReleaseStatus::Full;
+            meta.is_completed = true; // Done and dusted.
         } else {
-            config.milestone_fee_bps
-        };
-        let fee = (escrow.amount * fee_bps / BPS_DENOM)
-            .max(if escrow.token_mint.is_none() { MIN_FEE } else { 0 });
-        let winner_amt = escrow.amount.checked_sub(fee).ok_or(ErrorCode::Overflow)?;
-        let seeds = &[b"escrow", _transaction_id.as_ref(), &[ctx.bumps.escrow]];
-
-        transfer_funds(
-            escrow.token_mint,
-            &escrow.to_account_info(),
-            &ctx.accounts.team_wallet,
-            fee,
-            &ctx.accounts.token_program,
-            &ctx.accounts.system_program,
-            ctx.accounts.escrow_token_account.as_ref(),
-            ctx.accounts.team_token_account.as_ref(),
-            seeds,
-        )?;
-        transfer_funds(
-            escrow.token_mint,
-            &escrow.to_account_info(),
-            &ctx.accounts.winner,
-            winner_amt,
-            &ctx.accounts.token_program,
-            &ctx.accounts.system_program,
-            ctx.accounts.escrow_token_account.as_ref(),
-            ctx.accounts.winner_token_account.as_ref(),
-            seeds,
-        )?;
-
-        escrow.is_completed = true;
-        emit!(DisputeResolved {
-            transaction_id: escrow._transaction_id,
-            winner,
-        });
+            let now = Clock::get()?.unix_timestamp;
+            // Partial release, buyer gets 48 hours to cry foul.
+            meta.deposit_release_status = DepositReleaseStatus::Partial {
+                released_amount: amount,
+                dispute_deadline: now + 48 * 3600, // 48 hours, close enough.
+            };
+        }
         Ok(())
     }
 
-    pub fn close_escrow(ctx: Context<CloseEscrow>, _transaction_id: Pubkey) -> Result<()> {
-        let escrow = &ctx.accounts.escrow;
-        let config = &ctx.accounts.config;
-        require!(
-            ctx.accounts.authority.key() == config.authority,
-            ErrorCode::Unauthorized
-        );
-        require!(escrow.is_completed, ErrorCode::NotDone);
+    /// Buyer disputes the deposit. Gotta describe why, though.
+    pub fn dispute_deposit(ctx: Context<StartDepositDispute>, _tx_id: Pubkey, desc: String) -> Result<()> {
+        let meta = &mut ctx.accounts.transaction_metadata;
+
+        if ctx.accounts.buyer.key() != meta.buyer {
+            return Err(ProgramError::IllegalOwner.into()); // Not your fight, buddy.
+        }
+
+        if let DepositReleaseStatus::Partial { dispute_deadline, .. } = meta.deposit_release_status {
+            let now = Clock::get()?.unix_timestamp;
+            if now >= dispute_deadline {
+                return Err(ProgramError::InvalidAccountData.into()); // Too late, clock’s run out.
+            }
+        } else {
+            return Err(ProgramError::InvalidAccountData.into()); // No partial release, no dispute.
+        }
+
+        meta.is_disputed = true;
+        meta.dispute_description = desc; // Spill the tea.
+        Ok(())
+    }
+
+    /// Agent settles a dispute. Splits the deposit between buyer and seller.
+    pub fn settle_dispute(ctx: Context<ResolveDepositDispute>, _tx_id: Pubkey, renter_amt: u64, owner_amt: u64) -> Result<()> {
+        let meta = &mut ctx.accounts.transaction_metadata;
+
+        if ctx.accounts.agent.key() != meta.agent {
+            return Err(ProgramError::IllegalOwner.into()); // Agent only, no randos.
+        }
+        if !meta.is_disputed {
+            return Err(ProgramError::InvalidAccountData.into()); // Nothing to settle here.
+        }
+
+        let remaining = match meta.deposit_release_status {
+            DepositReleaseStatus::Partial { released_amount, .. } => meta.deposit_amount - released_amount,
+            _ => return Err(ProgramError::InvalidAccountData.into()), // Gotta be partial to settle.
+        };
+        if renter_amt + owner_amt != remaining {
+            return Err(ProgramError::InvalidArgument.into()); // Math doesn’t add up, try again.
+        }
+
+        let seeds = &[b"central_sol_escrow".as_ref(), &[ctx.bumps.central_sol_escrow]];
+        if renter_amt > 0 {
+            pull_funds(
+                renter_amt,
+                meta.token_mint,
+                &ctx.accounts.central_sol_escrow,
+                &ctx.accounts.buyer,
+                &ctx.accounts.token_program,
+                &ctx.accounts.system_program,
+                ctx.accounts.central_token_account.as_ref(),
+                ctx.accounts.buyer_token_account.as_ref(),
+                seeds,
+            )?;
+        }
+        if owner_amt > 0 {
+            pull_funds(
+                owner_amt,
+                meta.token_mint,
+                &ctx.accounts.central_sol_escrow,
+                &ctx.accounts.seller,
+                &ctx.accounts.token_program,
+                &ctx.accounts.system_program,
+                ctx.accounts.central_token_account.as_ref(),
+                ctx.accounts.seller_token_account.as_ref(),
+                seeds,
+            )?;
+        }
+        meta.is_completed = true; // Dispute’s over, move on.
+        Ok(())
+    }
+
+    /// Auto-releases remaining deposit to seller if dispute deadline passes.
+    pub fn auto_release(ctx: Context<AutoRelease>, _tx_id: Pubkey) -> Result<()> {
+        let meta = &mut ctx.accounts.transaction_metadata;
+        let now = Clock::get()?.unix_timestamp;
+
+        let remaining = match meta.deposit_release_status {
+            DepositReleaseStatus::Partial { dispute_deadline, released_amount } if now >= dispute_deadline => {
+                meta.deposit_amount - released_amount
+            }
+            DepositReleaseStatus::Partial { .. } => return Err(ProgramError::InvalidAccountData.into()), // Too early.
+            _ => return Err(ProgramError::InvalidAccountData.into()), // Nothing to release.
+        };
+
+        let seeds = &[b"central_sol_escrow".as_ref(), &[ctx.bumps.central_sol_escrow]];
+        pull_funds(
+            remaining,
+            meta.token_mint,
+            &ctx.accounts.central_sol_escrow,
+            &ctx.accounts.seller,
+            &ctx.accounts.token_program,
+            &ctx.accounts.system_program,
+            ctx.accounts.central_token_account.as_ref(),
+            ctx.accounts.seller_token_account.as_ref(),
+            seeds,
+        )?;
+        meta.is_completed = true; // Seller wins by default.
         Ok(())
     }
 }
 
+// Config account—keeps the big picture stuff.
 #[account]
 pub struct Config {
     pub authority: Pubkey,
-    pub team_wallet: Pubkey,
+    pub dao_pool: Pubkey,
     pub sol_fee_bps: u64,
-    pub milestone_fee_bps: u64,
-    pub required_token_amount: u64,
-    pub token_mint: Pubkey,
 }
 
+// Transaction metadata—everything we need to track an escrow deal.
 #[account]
-pub struct Escrow {
+pub struct TransactionMetadata {
     pub _transaction_id: Pubkey,
     pub buyer: Pubkey,
     pub seller: Pubkey,
     pub agent: Pubkey,
-    pub amount: u64,
+    pub rental_amount: u64,
+    pub deposit_amount: u64,
+    pub total_amount: u64,
     pub is_disputed: bool,
     pub is_completed: bool,
     pub release_timestamp: i64,
     pub token_mint: Option<Pubkey>,
-    pub milestones: Vec<Milestone>,
+    pub deposit_release_status: DepositReleaseStatus,
     pub dispute_description: String,
 }
 
+// Enum for tracking deposit release state. Simple but effective.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
-pub struct Milestone {
-    pub amount: u64,
-    pub is_completed: bool,
-    pub description: String,
+pub enum DepositReleaseStatus {
+    None,
+    Partial { released_amount: u64, dispute_deadline: i64 },
+    Full,
 }
 
+// Context structs below—Anchor’s way of making sure we’ve got all the accounts we need.
+
+// Setup the contract config.
 #[derive(Accounts)]
 pub struct InitializeContract<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
-    #[account(init, payer = authority, space = 8 + 32 + 32 + 8 + 8 + 8 + 32)]
+    #[account(init, payer = authority, space = 8 + 32 + 32 + 8)]
     pub config: Account<'info, Config>,
     pub system_program: Program<'info, System>,
 }
 
-#[derive(Accounts)]
-pub struct UpdateConfig<'info> {
-    #[account(mut)]
-    pub authority: Signer<'info>,
-    #[account(mut)]
-    pub config: Account<'info, Config>,
-}
-
+// Start an escrow deal.
 #[derive(Accounts)]
 #[instruction(tx_id: Pubkey)]
 pub struct InitializeEscrow<'info> {
     #[account(mut)]
     pub buyer: Signer<'info>,
-    /// CHECK: Seller's wallet address; stored in escrow for later validation against subsequent instructions
+    /// CHECK: Seller’s key, we trust it’s valid.
     pub seller: AccountInfo<'info>,
     pub agent: Signer<'info>,
     #[account(
         init,
         payer = buyer,
-        space = 8 + 32 * 4 + 8 + 1 + 1 + 8 + 33 + 4 + 4 + MAX_DESC_LEN,
-        seeds = [b"escrow", tx_id.as_ref()],
+        space = 8 + 32 * 4 + 8 + 8 + 8 + 1 + 1 + 8 + 33 + 4 + MAX_DESC_LEN,
+        seeds = [b"transaction", tx_id.as_ref()],
         bump
     )]
-    pub escrow: Account<'info, Escrow>,
-    pub config: Account<'info, Config>,
+    pub transaction_metadata: Account<'info, TransactionMetadata>,
+    /// CHECK: Escrow PDA, locked and loaded.
+    #[account(mut, seeds = [b"central_sol_escrow"], bump)]
+    pub central_sol_escrow: AccountInfo<'info>,
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, Token>,
-    /// CHECK: Buyer token account; validated in instruction logic if token_mint is provided
     #[account(mut)]
     pub buyer_token_account: Option<Account<'info, TokenAccount>>,
-    /// CHECK: Escrow token account; validated in instruction logic if token_mint is provided
     #[account(mut)]
-    pub escrow_token_account: Option<Account<'info, TokenAccount>>,
+    pub central_token_account: Option<Account<'info, TokenAccount>>,
 }
 
+// Release the rent payment.
 #[derive(Accounts)]
-#[instruction(tx_id: Pubkey, milestones: Vec<Milestone>)]
-pub struct InitializeMilestoneEscrow<'info> {
+#[instruction(transaction_id: Pubkey)]
+pub struct ReleaseRentalFee<'info> {
+    #[account(mut)]
+    pub agent: Signer<'info>,
     #[account(
-        init,
-        payer = buyer,
-        space = 8 + 32 * 4 + 8 + 1 + 1 + 8 + 33 + 4 + (milestones.len() * (8 + 1 + 4 + MAX_DESC_LEN)) + 4 + MAX_DESC_LEN,
-        seeds = [b"escrow", tx_id.as_ref()],
+        mut,
+        seeds = [b"transaction", transaction_id.as_ref()],
         bump
     )]
-    pub escrow: Account<'info, Escrow>,
+    pub transaction_metadata: Account<'info, TransactionMetadata>,
+    /// CHECK: Seller’s key, they’re getting paid.
+    #[account(mut)]
+    pub seller: AccountInfo<'info>,
+    /// CHECK: DAO pool, skimming its fee.
+    #[account(mut)]
+    pub dao_pool: AccountInfo<'info>,
+    pub config: Account<'info, Config>,
+    /// CHECK: Escrow PDA, funds come from here.
+    #[account(mut, seeds = [b"central_sol_escrow"], bump)]
+    pub central_sol_escrow: AccountInfo<'info>,
+    pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
+    #[account(mut)]
+    pub central_token_account: Option<Account<'info, TokenAccount>>,
+    #[account(mut)]
+    pub seller_token_account: Option<Account<'info, TokenAccount>>,
+    #[account(mut)]
+    pub dao_pool_token_account: Option<Account<'info, TokenAccount>>,
+}
+
+// Return deposit to buyer.
+#[derive(Accounts)]
+#[instruction(transaction_id: Pubkey)]
+pub struct ReleaseDeposit<'info> {
+    #[account(mut)]
+    pub seller: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [b"transaction", transaction_id.as_ref()],
+        bump
+    )]
+    pub transaction_metadata: Account<'info, TransactionMetadata>,
+    /// CHECK: Buyer’s key, they’re getting cash back.
+    #[account(mut)]
+    pub buyer: AccountInfo<'info>,
+    /// CHECK: Escrow PDA, funds are here.
+    #[account(mut, seeds = [b"central_sol_escrow"], bump)]
+    pub central_sol_escrow: AccountInfo<'info>,
+    pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
+    #[account(mut)]
+    pub central_token_account: Option<Account<'info, TokenAccount>>,
+    #[account(mut)]
+    pub buyer_token_account: Option<Account<'info, TokenAccount>>,
+}
+
+// Start a deposit dispute.
+#[derive(Accounts)]
+#[instruction(transaction_id: Pubkey, description: String)]
+pub struct StartDepositDispute<'info> {
     #[account(mut)]
     pub buyer: Signer<'info>,
-    /// CHECK: Seller's wallet address; stored in escrow for later validation against subsequent instructions
-    pub seller: AccountInfo<'info>,
-    pub agent: Signer<'info>,
-    pub config: Account<'info, Config>,
+    #[account(
+        mut,
+        seeds = [b"transaction", transaction_id.as_ref()],
+        bump
+    )]
+    pub transaction_metadata: Account<'info, TransactionMetadata>,
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, Token>,
-    /// CHECK: Buyer token account; validated in instruction logic if token_mint is provided
+}
+
+// Resolve a deposit dispute.
+#[derive(Accounts)]
+#[instruction(transaction_id: Pubkey)]
+pub struct ResolveDepositDispute<'info> {
+    #[account(mut)]
+    pub agent: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [b"transaction", transaction_id.as_ref()],
+        bump
+    )]
+    pub transaction_metadata: Account<'info, TransactionMetadata>,
+    /// CHECK: Buyer’s key, might get some funds.
+    #[account(mut)]
+    pub buyer: AccountInfo<'info>,
+    /// CHECK: Seller’s key, might get some too.
+    #[account(mut)]
+    pub seller: AccountInfo<'info>,
+    /// CHECK: Escrow PDA, holding the loot.
+    #[account(mut, seeds = [b"central_sol_escrow"], bump)]
+    pub central_sol_escrow: AccountInfo<'info>,
+    pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
+    #[account(mut)]
+    pub central_token_account: Option<Account<'info, TokenAccount>>,
     #[account(mut)]
     pub buyer_token_account: Option<Account<'info, TokenAccount>>,
-    /// CHECK: Escrow token account; validated in instruction logic if token_mint is provided
     #[account(mut)]
-    pub escrow_token_account: Option<Account<'info, TokenAccount>>,
+    pub seller_token_account: Option<Account<'info, TokenAccount>>,
 }
 
+// Auto-release deposit to seller.
 #[derive(Accounts)]
 #[instruction(transaction_id: Pubkey)]
-pub struct ReleasePayment<'info> {
-    #[account(mut)]
-    pub agent: Signer<'info>,
+pub struct AutoRelease<'info> {
     #[account(
         mut,
-        seeds = [b"escrow", transaction_id.as_ref()],
-        bump,
-        has_one = agent @ ErrorCode::Unauthorized
-    )]
-    pub escrow: Account<'info, Escrow>,
-    #[account(mut, constraint = seller.key() == escrow.seller @ ErrorCode::Unauthorized)]
-    /// CHECK: Seller's wallet address; stored in escrow for later validation against subsequent instructions
-    pub seller: AccountInfo<'info>,
-    #[account(mut, constraint = team_wallet.key() == config.team_wallet @ ErrorCode::Unauthorized)]
-    /// CHECK: Team wallet address; stored in config for later validation
-    pub team_wallet: AccountInfo<'info>,
-    pub config: Account<'info, Config>,
-    pub system_program: Program<'info, System>,
-    pub token_program: Program<'info, Token>,
-    #[account(mut, constraint = escrow.token_mint.map_or(true, |mint| escrow_token_account.mint == mint) @ ErrorCode::BadMint)]
-    pub escrow_token_account: Option<Account<'info, TokenAccount>>,
-    #[account(mut, constraint = escrow.token_mint.map_or(true, |mint| seller_token_account.mint == mint) @ ErrorCode::BadMint)]
-    pub seller_token_account: Option<Account<'info, TokenAccount>>,
-    #[account(mut, constraint = escrow.token_mint.map_or(true, |mint| team_token_account.mint == mint) @ ErrorCode::BadMint)]
-    pub team_token_account: Option<Account<'info, TokenAccount>>,
-}
-
-#[derive(Accounts)]
-#[instruction(transaction_id: Pubkey, idx: u8)]
-pub struct ReleaseMilestone<'info> {
-    #[account(mut)]
-    pub agent: Signer<'info>,
-    #[account(
-        mut,
-        seeds = [b"escrow", transaction_id.as_ref()],
-        bump,
-        has_one = agent @ ErrorCode::Unauthorized
-    )]
-    pub escrow: Account<'info, Escrow>,
-    #[account(mut, constraint = seller.key() == escrow.seller @ ErrorCode::Unauthorized)]
-    /// CHECK: Seller's wallet address; stored in escrow for later validation against subsequent instructions
-    pub seller: AccountInfo<'info>,
-    #[account(mut, constraint = team_wallet.key() == config.team_wallet @ ErrorCode::Unauthorized)]
-    /// CHECK: Team wallet address; stored in config for later validation
-    pub team_wallet: AccountInfo<'info>,
-    pub config: Account<'info, Config>,
-    pub system_program: Program<'info, System>,
-    pub token_program: Program<'info, Token>,
-    #[account(mut, constraint = escrow.token_mint.map_or(true, |mint| escrow_token_account.mint == mint) @ ErrorCode::BadMint)]
-    pub escrow_token_account: Option<Account<'info, TokenAccount>>,
-    #[account(mut, constraint = escrow.token_mint.map_or(true, |mint| seller_token_account.mint == mint) @ ErrorCode::BadMint)]
-    pub seller_token_account: Option<Account<'info, TokenAccount>>,
-    #[account(mut, constraint = escrow.token_mint.map_or(true, |mint| team_token_account.mint == mint) @ ErrorCode::BadMint)]
-    pub team_token_account: Option<Account<'info, TokenAccount>>,
-}
-
-#[derive(Accounts)]
-#[instruction(transaction_id: Pubkey)]
-pub struct CheckAndRelease<'info> {
-    #[account(
-        mut,
-        seeds = [b"escrow", transaction_id.as_ref()],
+        seeds = [b"transaction", transaction_id.as_ref()],
         bump
     )]
-    pub escrow: Account<'info, Escrow>,
-    #[account(mut, constraint = seller.key() == escrow.seller @ ErrorCode::Unauthorized)]
-    /// CHECK: Seller's wallet address; stored in escrow for later validation against subsequent instructions
+    pub transaction_metadata: Account<'info, TransactionMetadata>,
+    /// CHECK: Seller’s key, they’re cashing in.
+    #[account(mut)]
     pub seller: AccountInfo<'info>,
-    #[account(mut, constraint = team_wallet.key() == config.team_wallet @ ErrorCode::Unauthorized)]
-    /// CHECK: Team wallet address; stored in config for later validation
-    pub team_wallet: AccountInfo<'info>,
-    pub config: Account<'info, Config>,
+    /// CHECK: Escrow PDA, funds are here.
+    #[account(mut, seeds = [b"central_sol_escrow"], bump)]
+    pub central_sol_escrow: AccountInfo<'info>,
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, Token>,
-    #[account(mut, constraint = escrow.token_mint.map_or(true, |mint| escrow_token_account.mint == mint) @ ErrorCode::BadMint)]
-    pub escrow_token_account: Option<Account<'info, TokenAccount>>,
-    #[account(mut, constraint = escrow.token_mint.map_or(true, |mint| seller_token_account.mint == mint) @ ErrorCode::BadMint)]
+    #[account(mut)]
+    pub central_token_account: Option<Account<'info, TokenAccount>>,
+    #[account(mut)]
     pub seller_token_account: Option<Account<'info, TokenAccount>>,
-    #[account(mut, constraint = escrow.token_mint.map_or(true, |mint| team_token_account.mint == mint) @ ErrorCode::BadMint)]
-    pub team_token_account: Option<Account<'info, TokenAccount>>,
-}
-
-#[derive(Accounts)]
-#[instruction(transaction_id: Pubkey, desc: String)]
-pub struct StartDispute<'info> {
-    #[account(mut)]
-    pub agent: Signer<'info>,
-    #[account(
-        mut,
-        seeds = [b"escrow", transaction_id.as_ref()],
-        bump,
-        has_one = agent @ ErrorCode::Unauthorized
-    )]
-    pub escrow: Account<'info, Escrow>,
-    #[account(constraint = agent_token_account.mint == config.token_mint @ ErrorCode::BadMint)]
-    pub agent_token_account: Account<'info, TokenAccount>,
-    pub config: Account<'info, Config>,
-}
-
-#[derive(Accounts)]
-#[instruction(transaction_id: Pubkey, winner: Pubkey)]
-pub struct ResolveDispute<'info> {
-    #[account(mut)]
-    pub agent: Signer<'info>,
-    #[account(
-        mut,
-        seeds = [b"escrow", transaction_id.as_ref()],
-        bump,
-        has_one = agent @ ErrorCode::Unauthorized
-    )]
-    pub escrow: Account<'info, Escrow>,
-    /// CHECK: Winner's wallet address; validated in the function to be either buyer or seller
-    #[account(mut)]
-    pub winner: AccountInfo<'info>,
-    #[account(mut, constraint = team_wallet.key() == config.team_wallet @ ErrorCode::Unauthorized)]
-    /// CHECK: Team wallet address; stored in config for later validation
-    pub team_wallet: AccountInfo<'info>,
-    #[account(constraint = agent_token_account.mint == config.token_mint @ ErrorCode::BadMint)]
-    pub agent_token_account: Account<'info, TokenAccount>,
-    pub config: Account<'info, Config>,
-    pub system_program: Program<'info, System>,
-    pub token_program: Program<'info, Token>,
-    #[account(mut, constraint = escrow.token_mint.map_or(true, |mint| escrow_token_account.mint == mint) @ ErrorCode::BadMint)]
-    pub escrow_token_account: Option<Account<'info, TokenAccount>>,
-    #[account(mut, constraint = escrow.token_mint.map_or(true, |mint| winner_token_account.mint == mint) @ ErrorCode::BadMint)]
-    pub winner_token_account: Option<Account<'info, TokenAccount>>,
-    #[account(mut, constraint = escrow.token_mint.map_or(true, |mint| team_token_account.mint == mint) @ ErrorCode::BadMint)]
-    pub team_token_account: Option<Account<'info, TokenAccount>>,
-}
-
-#[derive(Accounts)]
-#[instruction(transaction_id: Pubkey)]
-pub struct CloseEscrow<'info> {
-    #[account(mut)]
-    pub authority: Signer<'info>,
-    #[account(
-        mut,
-        close = authority,
-        seeds = [b"escrow", transaction_id.as_ref()],
-        bump
-    )]
-    pub escrow: Account<'info, Escrow>,
-    pub config: Account<'info, Config>,
-}
-
-#[event]
-pub struct EscrowInitialized {
-    pub transaction_id: Pubkey,
-    pub buyer: Pubkey,
-    pub seller: Pubkey,
-    pub agent: Pubkey,
-    pub amount: u64,
-    pub token_mint: Option<Pubkey>,
-}
-
-#[event]
-pub struct MilestoneEscrowInitialized {
-    pub transaction_id: Pubkey,
-    pub buyer: Pubkey,
-    pub seller: Pubkey,
-    pub agent: Pubkey,
-    pub milestones: Vec<Milestone>,
-    pub token_mint: Option<Pubkey>,
-}
-
-#[event]
-pub struct PaymentReleased {
-    pub transaction_id: Pubkey,
-    pub seller: Pubkey,
-    pub amount: u64,
-}
-
-#[event]
-pub struct MilestoneReleased {
-    pub transaction_id: Pubkey,
-    pub milestone_index: u8,
-    pub amount: u64,
-}
-
-#[event]
-pub struct DisputeStarted {
-    pub transaction_id: Pubkey,
-    pub description: String,
-}
-
-#[event]
-pub struct DisputeResolved {
-    pub transaction_id: Pubkey,
-    pub winner: Pubkey,
-}
-
-#[error_code]
-pub enum ErrorCode {
-    #[msg("Unauthorized")]
-    Unauthorized,
-    #[msg("Already disputed")]
-    AlreadyDisputed,
-    #[msg("Not disputed")]
-    NotDisputed,
-    #[msg("Escrow is disputed")]
-    Disputed,
-    #[msg("Already done")]
-    Done,
-    #[msg("Math overflow")]
-    Overflow,
-    #[msg("Time overflow")]
-    TimeOverflow,
-    #[msg("No funds")]
-    NoFunds,
-    #[msg("Bad winner")]
-    BadWinner,
-    #[msg("Too early")]
-    TooEarly,
-    #[msg("Milestone done")]
-    MilestoneDone,
-    #[msg("Not done")]
-    NotDone,
-    #[msg("Bad mint")]
-    BadMint,
-    #[msg("Desc too long")]
-    DescTooLong,
-    #[msg("Desc too short")]
-    DescTooShort,
-    #[msg("Too low")]
-    TooLow,
-    #[msg("Too much")]
-    TooMuch,
-    #[msg("Too long")]
-    TooLong,
-    #[msg("Bad fee")]
-    BadFee,
-    #[msg("Low tokens")]
-    LowTokens,
-    #[msg("Has milestones")]
-    HasMilestones,
-    #[msg("No milestones")]
-    NoMilestones,
-    #[msg("Bad index")]
-    BadIndex,
-    #[msg("Already init")]
-    AlreadyInit,
 }
