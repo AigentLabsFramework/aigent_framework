@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aigent Labs Framework</title>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <style>
+    :root {
+      --background: #0d1117;
+      --text: #e6edf3;
+      --accent: #58a6ff;
+      --accent-hover: #79c0ff;
+      --card-bg: #161b22;
+      --code-bg: #0d1117;
+      --code-text: #e6edf3;
+      --border: #30363d;
+      --code-keyword: #ff7b72;
+      --code-function: #d2a8ff;
+      --code-string: #a5d6ff;
+      --code-number: #f0883e;
+      --code-comment: #8b949e;
+      --button-bg: #21262d;
+      --button-text: #e6edf3; 
+      --button-hover-bg: #30363d;
+      --shadow: rgba(0, 0, 0, 0.3);
+    }
+
+    body {
+      background-color: var(--background);
+      color: var(--text);
+      font-family: 'Montserrat', sans-serif;
+      margin: 0;
+      padding: 0;
+      line-height: 1.6;
+      position: relative;
+    }
+
+    /* Header */
+    header {
+      position: fixed;
+      top: 0;
+      width: 100%;
+      background-color: var(--card-bg);
+      padding: 1rem 0;
+      z-index: 1000;
+      box-shadow: 0 4px 12px var(--shadow);
+      border-bottom: 1px solid var(--border);
+    }
+
+    header .container {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logo {
+      font-size: 1.8rem;
+      font-weight: 600;
+      color: var(--accent);
+      letter-spacing: 1px;
+      text-shadow: 0 0 8px rgba(88, 166, 255, 0.3);
+    }
+
+    nav a {
+      color: var(--text);
+      text-decoration: none;
+      margin-left: 2rem;
+      font-size: 1.1rem;
+      font-weight: 400;
+      transition: color 0.3s ease, text-shadow 0.3s ease;
+    }
+
+    nav a:hover {
+      color: var(--accent-hover);
+      text-shadow: 0 0 5px var(--accent-hover);
+    }
+
+    /* Container */
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 2rem;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Hero Section */
+    .hero {
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      background: linear-gradient(180deg, var(--card-bg), var(--background));
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero .code-background {
+      position: absolute;
+      top: 50%;
+      left: 5vw;
+      width: clamp(300px, 30vw, 600px);
+      transform: translateY(-50%);
+      overflow: hidden;
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.6;
+    }
+
+    .hero .code-background pre {
+      font-size: 0.9rem;
+      white-space: pre;
+      animation: float 60s linear infinite;
+      margin: 0;
+      color: var(--code-text);
+    }
+
+    @keyframes float {
+      0% { transform: translateY(100%); }
+      100% { transform: translateY(-100%); }
+    }
+
+    .hero .code-background .keyword { color: var(--code-keyword); }
+    .hero .code-background .function { color: var(--code-function); }
+    .hero .code-background .string { color: var(--code-string); }
+    .hero .code-background .number { color: var(--code-number); }
+    .hero .code-background .comment { color: var(--code-comment); opacity: 0.8; }
+
+    .hero h1, .hero p, .hero .cta-button {
+      opacity: 0;
+      animation: fadeIn 1s ease forwards;
+      position: relative;
+      z-index: 1;
+    }
+
+    .hero h1 {
+      font-size: 3.5rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+      letter-spacing: 2px;
+      color: var(--accent);
+      text-shadow: 0 0 10px rgba(88, 166, 255, 0.5);
+      animation-delay: 0.2s;
+    }
+
+    .hero p {
+      font-size: 1.3rem;
+      font-weight: 300;
+      margin-bottom: 2rem;
+      max-width: 700px;
+      margin-left: auto;
+      margin-right: auto;
+      animation-delay: 0.4s;
+    }
+
+    .hero .cta-button {
+      animation-delay: 0.6s;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* CTA Button */
+    .cta-button {
+      background: var(--button-bg);
+      color: var(--button-text);
+      padding: 1rem 2.5rem;
+      border-radius: 12px;
+      text-decoration: none;
+      font-size: 1.2rem;
+      font-weight: 600;
+      display: inline-block;
+      box-shadow: 0 4px 12px var(--shadow), 0 0 10px rgba(88, 166, 255, 0.2);
+      border: 1px solid var(--accent);
+      transition: background 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+    }
+
+    .cta-button:hover {
+      background: var(--button-hover-bg);
+      transform: translateY(-3px);
+      box-shadow: 0 6px 20px var(--shadow), 0 0 15px rgba(88, 166, 255, 0.4);
+      border-color: var(--accent-hover);
+    }
+
+    /* Sections */
+    .section {
+      padding: 6rem 0;
+      text-align: center;
+      opacity: 0;
+      transform: translateY(30px);
+      transition: opacity 0.8s ease, transform 0.8s ease;
+    }
+
+    .section.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .section h2 {
+      font-size: 2.8rem;
+      font-weight: 600;
+      margin-bottom: 1.5rem;
+      letter-spacing: 1.5px;
+      color: var(--accent);
+      text-shadow: 0 0 8px rgba(88, 166, 255, 0.3);
+    }
+
+    .section p {
+      font-size: 1.2rem;
+      font-weight: 300;
+      max-width: 800px;
+      margin: 0 auto 2rem;
+    }
+
+    .section a {
+      color: var(--accent);
+      text-decoration: underline;
+      transition: color 0.3s ease;
+    }
+
+    .section a:hover {
+      color: var(--accent-hover);
+    }
+
+    /* Code Window */
+    .code-container {
+      max-width: 900px;
+      margin: 2rem auto;
+    }
+
+    .code-window {
+      background: var(--code-bg);
+      padding: 2rem;
+      border-radius: 10px;
+      box-shadow: 0 6px 20px var(--shadow);
+      border: 1px solid var(--border);
+      text-align: left;
+    }
+
+    pre {
+      margin: 0;
+    }
+
+    code {
+      font-family: 'Courier New', monospace;
+      font-size: 1rem;
+      color: var(--code-text);
+      white-space: pre-wrap;
+    }
+
+    /* Monetize Grid */
+    .monetize-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 2rem;
+      margin: 2rem auto;
+      max-width: 1200px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      padding: 2rem;
+      border-radius: 12px;
+      box-shadow: 0 4px 15px var(--shadow);
+      border: 1px solid var(--border);
+      transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+      opacity: 0;
+      transform: translateY(20px);
+    }
+
+    .section.visible .card {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .section.visible .card:nth-child(1) { transition-delay: 0.1s; }
+    .section.visible .card:nth-child(2) { transition-delay: 0.2s; }
+    .section.visible .card:nth-child(3) { transition-delay: 0.3s; }
+    .section.visible .card:nth-child(4) { transition-delay: 0.4s; }
+    .section.visible .card:nth-child(5) { transition-delay: 0.5s; }
+    .section.visible .card:nth-child(6) { transition-delay: 0.6s; }
+
+    .card:hover {
+      transform: translateY(-8px);
+      box-shadow: 0 8px 25px var(--shadow), 0 0 10px rgba(88, 166, 255, 0.2);
+      border-color: var(--accent);
+    }
+
+    .card i {
+      font-size: 2rem;
+      color: var(--accent);
+      margin-bottom: 1rem;
+      transition: transform 0.3s ease;
+    }
+
+    .card:hover i {
+      transform: scale(1.1);
+    }
+
+    .card h4 {
+      color: var(--accent);
+      font-size: 1.4rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+    }
+
+    .card p {
+      font-size: 1rem;
+      font-weight: 300;
+      margin: 0.5rem 0;
+    }
+
+    /* Footer */
+    footer {
+      background: var(--card-bg);
+      padding: 3rem 0;
+      text-align: center;
+      box-shadow: 0 -4px 12px var(--shadow);
+      border-top: 1px solid var(--border);
+    }
+
+    footer p {
+      font-size: 1.1rem;
+      font-weight: 300;
+      margin-bottom: 1.5rem;
+    }
+
+    .social-icons a {
+      color: var(--accent);
+      font-size: 2rem;
+      margin: 0 1.5rem;
+      transition: color 0.3s ease, transform 0.3s ease;
+    }
+
+    .social-icons a:hover {
+      color: var(--accent-hover);
+      transform: scale(1.1);
+    }
+
+    /* Responsive Design */
+    @media (max-width: 768px) {
+      header .container { padding: 0.5rem 1rem; }
+      .logo { font-size: 1.5rem; }
+      nav a { font-size: 0.9rem; margin-left: 1rem; }
+      .hero h1 { font-size: 2.5rem; }
+      .hero p { font-size: 1.1rem; }
+      .section { padding: 4rem 1rem; }
+      .section h2 { font-size: 2rem; }
+      .cta-button { padding: 0.8rem 2rem; font-size: 1rem; }
+      .hero .code-background {
+        width: clamp(200px, 25vw, 400px);
+        left: 2vw;
+      }
+    }
+
+    @media (max-width: 480px) {
+      header .container { padding: 0.3rem 0.5rem; }
+      .logo { font-size: 1.2rem; }
+      nav a { font-size: 0.8rem; margin-left: 0.5rem; }
+      .hero .code-background {
+        display: none; /* Hide on small screens for clarity */
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <div class="logo">Aigent Labs Framework</div>
+      <nav>
+        <a href="#framework" onclick="scrollToSection('framework')">Framework</a>
+        <a href="#monetize" onclick="scrollToSection('monetize')">Monetize</a>
+        <a href="#explore-agents" onclick="scrollToSection('explore-agents')">Explore Our Agents</a>
+        <a href="https://dexscreener.com/solana/" target="_blank">$ALF</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="code-background">
+      <pre>
+<span class="keyword">#[program]</span>
+<span class="keyword">pub mod</span> aigent_framework {
+    <span class="keyword">use</span> super::*;
+    <span class="keyword">use</span> crate::helpers::{<span class="function">pull_funds</span>, <span class="function">send_to_escrow</span>};
+
+    <span class="keyword">const</span> BPS_DENOM: <span class="keyword">u64</span> = <span class="number">10_000</span>;
+
+    <span class="keyword">pub fn</span> <span class="function">initialize_contract</span>(
+        ctx: Context<InitializeContract>,
+        dao_pool: Pubkey,
+        sol_fee_bps: <span class="keyword">u64</span>,
+    ) -> Result<()> {
+        <span class="keyword">let</span> config = &<span class="keyword">mut</span> ctx.accounts.config;
+        config.authority = *ctx.accounts.authority.key;
+        config.dao_pool = dao_pool;
+        config.sol_fee_bps = sol_fee_bps;
+        <span class="function">Ok</span>(())
+    }
+
+    <span class="keyword">pub fn</span> <span class="function">start_escrow</span>(
+        ctx: Context<InitializeEscrow>,
+        tx_id: Pubkey,
+        rent: <span class="keyword">u64</span>,
+        deposit: <span class="keyword">u64</span>,
+        release_secs: <span class="keyword">u64</span>,
+        token_mint: Option<Pubkey>,
+    ) -> Result<()> {
+        <span class="keyword">let</span> total = rent + deposit;
+        <span class="keyword">let</span> meta = &<span class="keyword">mut</span> ctx.accounts.transaction_metadata;
+        <span class="keyword">let</span> now = <span class="function">Clock::get</span>()?.unix_timestamp;
+
+        meta._transaction_id = tx_id;
+        meta.buyer = *ctx.accounts.buyer.key;
+        meta.seller = *ctx.accounts.seller.key;
+        meta.agent = *ctx.accounts.agent.key;
+        meta.rental_amount = rent;
+        meta.deposit_amount = deposit;
+        meta.total_amount = total;
+        meta.is_disputed = <span class="keyword">false</span>;
+        meta.is_completed = <span class="keyword">false</span>;
+        meta.release_timestamp = now + release_secs <span class="keyword">as</span> <span class="keyword">i64</span>;
+        meta.token_mint = token_mint;
+        meta.dispute_description = <span class="function">String::new</span>();
+        meta.deposit_release_status = DepositReleaseStatus::None;
+
+        <span class="function">send_to_escrow</span>(
+            total,
+            token_mint,
+            &ctx.accounts.buyer,
+            &ctx.accounts.central_sol_escrow,
+            &ctx.accounts.token_program,
+            &ctx.accounts.system_program,
+            ctx.accounts.buyer_token_account.as_ref(),
+            ctx.accounts.central_token_account.as_ref(),
+        )?;
+        <span class="function">Ok</span>(())
+    }
+}
+      </pre>
+    </div>
+    <div class="container">
+      <h1>Decentralized Commerce Agents</h1>
+      <p>Elevate your business with Solana-powered agents for marketplaces, rentals, and beyond.</p>
+      <a href="#explore-agents" class="cta-button" onclick="scrollToSection('explore-agents')">Discover Now</a>
+    </div>
+  </section>
+
+  <section id="framework" class="section">
+    <div class="container">
+      <h2>Our Framework</h2>
+      <p>An open-source framework on Solana empowering developers to build and monetize decentralized commerce solutions with secure, seamless peer-to-peer transactions.</p>
+      <div class="code-container">
+        <div class="code-window">
+          <pre><code>Phase 1: Pump.Fun Token
+Phase 2: ALF Smart Program
+  - Agent Integration
+  - Payment Processing
+  - Escrow Services
+Phase 3: DAO Governance
+  - Lock tokens, share 50% fees
+Phase 4: Agents & Extensions
+  - Developer Monetization
+Phase 5: User Flows
+  - List, Pay, Release Funds</code></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="monetize" class="section">
+    <div class="container">
+      <h2>Monetize with ALF DAO</h2>
+      <p>Craft, integrate, and profit—on your terms.</p>
+      <div class="monetize-grid">
+        <div class="card">
+          <i class="fas fa-robot"></i>
+          <h4>Telegram & Discord Bots</h4>
+          <p>Engage communities with premium bots.</p>
+          <p><strong>Monetize:</strong> Subscriptions or per-use fees.</p>
+          <p><strong>Example:</strong> Exclusive content bot with a fee.</p>
+        </div>
+        <div class="card">
+          <i class="fas fa-dice"></i>
+          <h4>Betting Bots</h4>
+          <p>Launch decentralized betting platforms.</p>
+          <p><strong>Monetize:</strong> Cut of bets or fees.</p>
+          <p><strong>Example:</strong> Crypto price betting, 2% per wager.</p>
+        </div>
+        <div class="card">
+          <i class="fas fa-store"></i>
+          <h4>Marketplace Bots</h4>
+          <p>Automate trading and auctions.</p>
+          <p><strong>Monetize:</strong> Trade or listing fees.</p>
+          <p><strong>Example:</strong> NFT auction bot with a percentage cut.</p>
+        </div>
+        <div class="card">
+          <i class="fas fa-key"></i>
+          <h4>Rental Bots</h4>
+          <p>Safely manage rentals by separating rent fees and safety fees.</p>
+          <p><strong>Monetize:</strong> Rental contract fees.</p>
+          <p><strong>Example:</strong> Virtual land rental, 5% of rent.</p>
+        </div>
+        <div class="card">
+          <i class="fas fa-credit-card"></i>
+          <h4>Payment Plugins</h4>
+          <p>Enable crypto payments for stores.</p>
+          <p><strong>Monetize:</strong> Licensing or transaction fees.</p>
+          <p><strong>Example:</strong> Shopify plugin, 1% per sale.</p>
+        </div>
+        <div class="card">
+          <i class="fas fa-server"></i>
+          <h4>Decentralized Compute Power</h4>
+          <p>Pool resources to access shared compute power or APIs.</p>
+          <p><strong>Monetize:</strong> Earn by contributing compute power or sharing APIs.</p>
+          <p><strong>Example:</strong> Rent out your PC's idle time for AI training tasks.</p>
+        </div>
+      </div>
+      <a href="https://github.com/AigentLabsFramework" class="cta-button">Begin Crafting</a>
+    </div>
+  </section>
+
+  <section id="explore-agents" class="section">
+    <div class="container">
+      <h2>Explore Our Agents</h2>
+      <p>Unveil pre-built agents for decentralized commerce or create your own masterpiece.</p>
+      <p>Clone the repo: <a href="https://github.com/AigentLabsFramework" target="_blank">git clone https://github.com/AigentLabsFramework</a></p>
+      <p>Install dependencies: <code>pip install python-telegram-bot solders anchorpy</code> (or <code>discord.py</code> for Discord)</p>
+      <p>Configure: Add token, wallet, and RPC.</p>
+      <p>Run your agent: <code>python your_agent.py</code></p>
+      <p>Full docs: <a href="https://github.com/AigentLabsFramework" target="_blank">GitHub</a></p>
+    </div>
+  </section>
+
+  <footer>
+    <div class="container">
+      <p>Aigent Labs Framework - Pioneering Decentralized Commerce on Solana ❤️</p>
+      <div class="social-icons">
+        <a href="https://github.com/AigentLabsFramework" target="_blank"><i class="fab fa-github"></i></a>
+        <a href="https://x.com/AigentLabs" target="_blank"><i class="fab fa-twitter"></i></a>
+        <a href="https://t.me/ALFDAO" target="_blank"><i class="fab fa-telegram"></i></a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // Smooth Scrolling
+    function scrollToSection(sectionId) {
+      const section = document.getElementById(sectionId);
+      const headerHeight = document.querySelector('header').offsetHeight;
+      window.scrollTo({
+        top: section.getBoundingClientRect().top + window.scrollY - headerHeight - 20,
+        behavior: 'smooth'
+      });
+    }
+
+    // Intersection Observer for Animations
+    const sections = document.querySelectorAll('.section');
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.1 });
+
+    sections.forEach(section => observer.observe(section));
+  </script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+/* Base styles for the floating code box */
+.hero .floating-code {
+  position: absolute;
+  top: 50%;
+  left: 2rem; /* Fixed distance from the left edge */
+  width: 350px; /* Fixed width to start, wide enough for content but controlled */
+  transform: translateY(-50%);
+  overflow: hidden;
+  z-index: 0; /* Ensure it stays behind the container */
+  pointer-events: none; /* Prevent interaction interference */
+}
+
+/* On medium screens (up to 1400px), reduce width and adjust position */
+@media (max-width: 1400px) {
+  .hero .floating-code {
+    width: 250px;
+    left: 1rem;
+  }
+}
+
+/* On small screens (up to 900px), hide it to prevent overlap */
+@media (max-width: 900px) {
+  .hero .floating-code {
+    display: none;
+  }
+}
