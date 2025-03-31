@@ -22,7 +22,7 @@
       --code-number: #f0883e;
       --code-comment: #8b949e;
       --button-bg: #21262d;
-      --button-text: #e6edf3; 
+      --button-text: #e6edf3;
       --button-hover-bg: #30363d;
       --shadow: rgba(0, 0, 0, 0.3);
     }
@@ -35,9 +35,9 @@
       padding: 0;
       line-height: 1.6;
       position: relative;
+      overflow-x: hidden;
     }
 
-    /* Header */
     header {
       position: fixed;
       top: 0;
@@ -63,7 +63,12 @@
       text-shadow: 0 0 8px rgba(88, 166, 255, 0.3);
     }
 
-    nav a {
+    .desktop-nav {
+      display: flex;
+    }
+
+    .desktop-nav a,
+    .mobile-nav a {
       color: var(--text);
       text-decoration: none;
       margin-left: 2rem;
@@ -72,21 +77,53 @@
       transition: color 0.3s ease, text-shadow 0.3s ease;
     }
 
-    nav a:hover {
+    .desktop-nav a:hover,
+    .mobile-nav a:hover {
       color: var(--accent-hover);
       text-shadow: 0 0 5px var(--accent-hover);
     }
 
-    /* Container */
+    .mobile-menu-toggle {
+      display: none;
+      font-size: 1.5rem;
+      color: var(--accent);
+      cursor: pointer;
+    }
+
+    .mobile-nav {
+      display: none;
+      position: fixed;
+      top: 60px;
+      left: 0;
+      width: 100%;
+      background: var(--card-bg);
+      flex-direction: column;
+      padding: 1rem 0;
+      border-top: 1px solid var(--border);
+      z-index: 999;
+    }
+
+    .mobile-nav a {
+      margin: 1rem 0;
+      text-align: center;
+      font-size: 1.2rem;
+      margin-left: 0;
+    }
+
+    .mobile-nav.active {
+      display: flex;
+    }
+
     .container {
       max-width: 1200px;
       margin: 0 auto;
-      padding: 0 2rem;
+      padding: 0 1rem;
       position: relative;
       z-index: 1;
+      width: 100%;
+      box-sizing: border-box;
     }
 
-    /* Hero Section */
     .hero {
       height: 100vh;
       display: flex;
@@ -101,8 +138,8 @@
     .hero .code-background {
       position: absolute;
       top: 50%;
-      left: 5vw;
-      width: clamp(300px, 30vw, 600px);
+      left: 1rem;
+      width: clamp(150px, 20vw, 350px);
       transform: translateY(-50%);
       overflow: hidden;
       z-index: 0;
@@ -165,7 +202,6 @@
       to { opacity: 1; transform: translateY(0); }
     }
 
-    /* CTA Button */
     .cta-button {
       background: var(--button-bg);
       color: var(--button-text);
@@ -187,7 +223,6 @@
       border-color: var(--accent-hover);
     }
 
-    /* Sections */
     .section {
       padding: 6rem 0;
       text-align: center;
@@ -227,7 +262,6 @@
       color: var(--accent-hover);
     }
 
-    /* Code Window */
     .code-container {
       max-width: 900px;
       margin: 2rem auto;
@@ -253,7 +287,6 @@
       white-space: pre-wrap;
     }
 
-    /* Monetize Grid */
     .monetize-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -346,25 +379,24 @@
     @media (max-width: 768px) {
       header .container { padding: 0.5rem 1rem; }
       .logo { font-size: 1.5rem; }
-      nav a { font-size: 0.9rem; margin-left: 1rem; }
+      .desktop-nav { display: none; }
+      .mobile-menu-toggle { display: block; }
       .hero h1 { font-size: 2.5rem; }
       .hero p { font-size: 1.1rem; }
       .section { padding: 4rem 1rem; }
       .section h2 { font-size: 2rem; }
       .cta-button { padding: 0.8rem 2rem; font-size: 1rem; }
       .hero .code-background {
-        width: clamp(200px, 25vw, 400px);
-        left: 2vw;
+        width: clamp(100px, 15vw, 250px);
+        left: 0.5rem;
       }
+      .container { padding: 0 0.5rem; }
     }
 
     @media (max-width: 480px) {
       header .container { padding: 0.3rem 0.5rem; }
       .logo { font-size: 1.2rem; }
-      nav a { font-size: 0.8rem; margin-left: 0.5rem; }
-      .hero .code-background {
-        display: none; /* Hide on small screens for clarity */
-      }
+      .hero .code-background { display: none; }
     }
   </style>
 </head>
@@ -372,11 +404,22 @@
   <header>
     <div class="container">
       <div class="logo">Aigent Labs Framework</div>
-      <nav>
+      <nav class="desktop-nav">
         <a href="#framework" onclick="scrollToSection('framework')">Framework</a>
         <a href="#monetize" onclick="scrollToSection('monetize')">Monetize</a>
         <a href="#explore-agents" onclick="scrollToSection('explore-agents')">Explore Our Agents</a>
         <a href="https://dexscreener.com/solana/" target="_blank">$ALF</a>
+        <a href="#footer" onclick="scrollToSection('footer')">Contact</a>
+      </nav>
+      <div class="mobile-menu-toggle">
+        <i class="fas fa-bars"></i>
+      </div>
+      <nav class="mobile-nav">
+        <a href="#framework" onclick="scrollToSection('framework')">Framework</a>
+        <a href="#monetize" onclick="scrollToSection('monetize')">Monetize</a>
+        <a href="#explore-agents" onclick="scrollToSection('explore-agents')">Explore Our Agents</a>
+        <a href="https://dexscreener.com/solana/" target="_blank">$ALF</a>
+        <a href="#footer" onclick="scrollToSection('footer')">Contact</a>
       </nav>
     </div>
   </header>
@@ -537,7 +580,7 @@ Phase 5: User Flows
     </div>
   </section>
 
-  <footer>
+  <footer id="footer">
     <div class="container">
       <p>Aigent Labs Framework - Pioneering Decentralized Commerce on Solana ❤️</p>
       <div class="social-icons">
@@ -549,7 +592,6 @@ Phase 5: User Flows
   </footer>
 
   <script>
-    // Smooth Scrolling
     function scrollToSection(sectionId) {
       const section = document.getElementById(sectionId);
       const headerHeight = document.querySelector('header').offsetHeight;
@@ -559,7 +601,6 @@ Phase 5: User Flows
       });
     }
 
-    // Intersection Observer for Animations
     const sections = document.querySelectorAll('.section');
     const observer = new IntersectionObserver((entries) => {
       entries.forEach(entry => {
@@ -571,6 +612,19 @@ Phase 5: User Flows
     }, { threshold: 0.1 });
 
     sections.forEach(section => observer.observe(section));
+
+    const menuToggle = document.querySelector('.mobile-menu-toggle');
+    const mobileNav = document.querySelector('.mobile-nav');
+
+    menuToggle.addEventListener('click', () => {
+      mobileNav.classList.toggle('active');
+    });
+
+    mobileNav.querySelectorAll('a').forEach(link => {
+      link.addEventListener('click', () => {
+        mobileNav.classList.remove('active');
+      });
+    });
   </script>
 </body>
 </html>
