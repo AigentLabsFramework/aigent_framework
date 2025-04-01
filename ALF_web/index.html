@@ -6,6 +6,7 @@
   <title>Aigent Labs Framework</title>
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <style>
     :root {
       --background: #0d1117;
@@ -403,7 +404,9 @@
 <body>
   <header>
     <div class="container">
-      <div class="logo">Aigent Labs Framework</div>
+      <div class="logo">
+        <img src="/alf_1.png" alt="Aigent Labs Framework Logo" style="height: 40px; vertical-align: middle;">
+      </div>
       <nav class="desktop-nav">
         <a href="#framework" onclick="scrollToSection('framework')">Framework</a>
         <a href="#monetize" onclick="scrollToSection('monetize')">Monetize</a>
@@ -459,7 +462,7 @@
         <span class="keyword">let</span> now = <span class="function">Clock::get</span>()?.unix_timestamp;
 
         meta._transaction_id = tx_id;
-        meta.buyer = *ctx.accounts.buyer.key;
+        meta.bVbuyer = *ctx.accounts.buyer.key;
         meta.seller = *ctx.accounts.seller.key;
         meta.agent = *ctx.accounts.agent.key;
         meta.rental_amount = rent;
